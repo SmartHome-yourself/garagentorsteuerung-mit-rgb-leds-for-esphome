@@ -1,0 +1,466 @@
+esphome:
+  name: garage-rgb-led
+  platform: ESP8266
+  board: d1_mini
+
+wifi:
+  ssid: "WiFi_SSID"
+  password: "WiFi_Password123"
+  
+  ap:
+    ssid: "garagentorWiFi"
+    password: "123456789"
+
+captive_portal:
+logger:
+
+api:
+
+ota:
+  password: "TopSecretSuperPasswort"
+
+globals:
+
+#  -----------------------------
+#  -------- CONFIG START ------- 
+#  -----------------------------
+# Breite des Balkens bei Animationen der LEDs
+    - id: ANIM_BREITE
+      type: int
+      restore_value: no
+      initial_value: '15'      
+
+# Geschwindigkeit der Animation (kleiner = schneller)
+    - id: DEFAULT_DELAY
+      type: int
+      restore_value: no
+      initial_value: '14'      
+
+# Angabe wie viele Sekunden die Spots anbleiben sollen
+    - id: shutoff_delay_spots
+      type: int
+      restore_value: no
+      initial_value: '120'
+
+#  -----------------------------
+#  -------- CONFIG ENDE -------- 
+#  -----------------------------
+
+
+
+# INTERNE VARIABLEN! NICHT ÄNDERN!
+    - id: led_pos
+      type: int
+      restore_value: no
+      initial_value: '0'
+    - id: forward
+      type: bool
+      restore_value: no
+      initial_value: 'true'
+
+
+
+script:
+# Programmablauf während Tor sich öffnet
+  - id: door_opening
+    mode: restart
+    then:
+      - script.execute: stop_running_end_scripts
+      - light.turn_on:
+          id: garagentor_leds
+          effect: "Tor in Bewegung"
+      - delay: 60s
+      - light.turn_off:
+          id: garagentor_leds
+
+
+# Programmablauf wenn Tor vollständig geöffnet wurde
+  - id: door_opened
+    mode: restart
+    then:
+      - script.execute: stop_running_moving_scripts
+      - light.turn_on:
+          id: garagentor_leds
+          effect: "Tor fertig"
+      - delay: 11s
+      - light.turn_on:
+          id: garagentor_leds
+          effect: "Activate Spots"
+      - delay: !lambda 'return id(shutoff_delay_spots)*1000;'
+      - light.turn_off: garagentor_leds
+
+
+# Programmablauf während Tor sich schließt
+  - id: door_closing
+    mode: restart
+    then:
+      - script.execute: stop_running_end_scripts
+      - light.turn_on:
+          id: garagentor_leds
+          effect: "Tor in Bewegung"
+      - delay: 60s
+      - light.turn_off:
+          id: garagentor_leds
+
+# Programmablauf wenn Tor vollständig geschlossen wurde
+  - id: door_closed
+    mode: restart
+    then:
+      - script.execute: stop_running_moving_scripts
+      - light.turn_on:
+          id: garagentor_leds
+          effect: "Tor fertig"
+      - delay: 11s
+      - light.turn_on:
+          id: garagentor_leds
+          effect: "Activate Spots"
+      - delay: !lambda 'return id(shutoff_delay_spots)*1000;'
+      - light.turn_off: garagentor_leds
+
+
+# ggf. aktive Scripte stoppen
+  - id: stop_running_end_scripts
+    mode: restart
+    then:
+      - if:
+          condition:
+            - script.is_running: door_opened
+          then:
+            - script.stop: door_opened
+      - if:
+          condition:
+            - script.is_running: door_closed
+          then:
+            - script.stop: door_closed
+
+  - id: stop_running_moving_scripts
+    mode: restart
+    then:
+      - if:
+          condition:
+            - script.is_running: door_opening
+          then:
+            - script.stop: door_opening
+      - if:
+          condition:
+            - script.is_running: door_closing
+          then:
+            - script.stop: door_closing
+
+
+
+
+switch:
+# Relais für Signal an Motor
+# mit on_turn_on automatisch wieder abschalten
+  - platform: gpio
+    name: "Carport Tor"
+    id: garagentor_tor_relais
+    pin: D7
+    on_turn_on:
+      - delay: 1s
+      - switch.turn_off: garagentor_tor_relais    
+
+
+
+binary_sensor:
+# Reed-Kontakt für Tor vollständig geöffnet
+  - platform: gpio
+    name: "Carport Tor Offen"
+    device_class: garage_door
+    id: garagentor_tor_open_sensor
+    pin: 
+      number: D5
+      inverted: true
+    filters:
+      - delayed_off: 500ms      
+      - delayed_on: 100ms      
+    on_release:
+      - text_sensor.template.publish:
+          id: garagentor_tor_status
+          state: "Geöffnet"
+      - script.execute: door_opened
+    on_press:
+      - text_sensor.template.publish:
+          id: garagentor_tor_status
+          state: "Tor schließt sich"
+      - script.execute: door_closing
+
+# Reed-Kontakt für Tor vollständig geschlossen
+  - platform: gpio
+    name: "Carport Tor geschlossen"
+    device_class: garage_door
+    id: garagentor_tor_closed_sensor
+    pin: 
+      number: D6
+      inverted: true
+    filters:
+      - delayed_off: 500ms      
+      - delayed_on: 100ms      
+    on_release:
+      - text_sensor.template.publish:
+          id: garagentor_tor_status
+          state: "Geschlossen"
+      - script.execute: door_closed
+    on_press:
+      - text_sensor.template.publish:
+          id: garagentor_tor_status
+          state: "Tor öffnet sich"
+      - script.execute: door_opening
+
+# Taster zur manuellen Bedienung des Tores
+# schaltet bei Druck das Relais
+  - platform: gpio
+    name: "Garagentor Tor Taster"
+    id: garagentor_tor_btn
+    pin: D1
+    filters:
+      - delayed_off: 500ms
+    on_press:
+      then:
+        - switch.turn_on: garagentor_tor_relais
+    on_release:
+      then:
+        - switch.turn_off: garagentor_tor_relais
+
+
+text_sensor:
+  - platform: template
+    name: "Garagentor Tor-Status"
+    id: garagentor_tor_status
+    lambda: |-
+      if(!id(garagentor_tor_closed_sensor).state){
+        return {"Geschlossen"};
+      } else if (!id(garagentor_tor_open_sensor).state){
+        return {"Geöffnet"};
+      } else {
+        return {"In Bewegung"};
+      }
+    update_interval: 120s
+
+
+light:
+
+
+  - platform: neopixelbus
+    type: GRB
+    variant: WS2812
+    name: "Garagentor LEDs"
+    id: garagentor_leds
+    pin: D2
+    num_leds: 150
+    default_transition_length: 1s
+    restore_mode: ALWAYS_OFF
+
+    effects:
+      - addressable_rainbow:
+          name: Rainbow
+          speed: 10
+          width: 20
+
+# Animation: 2 rote Blöcke laufen entgegengesetzt hin und her
+      - addressable_lambda:
+          name: "Tor in Bewegung"
+          update_interval: 16ms
+          lambda: |-
+            static const int16_t LAST = it.size()-1;
+
+            static int16_t pos2 = 0;
+
+            if (initial_run) {
+              id(led_pos) = 0;
+              id(forward) = true;
+            }
+
+            pos2 = LAST - id(ANIM_BREITE) - id(led_pos) +1;
+
+            if(id(forward)){
+              if(id(led_pos) > 0){
+                it[id(led_pos)-1] = ESPColor(0,0,0);
+                it[pos2+id(ANIM_BREITE)] = ESPColor(0,0,0);
+              }
+
+              it.range(id(led_pos), id(led_pos) + id(ANIM_BREITE)) = ESPColor(255,0,0);
+              it.range(pos2, pos2 + id(ANIM_BREITE)) = ESPColor(255,0,0);
+
+              if(id(led_pos) < (LAST - id(ANIM_BREITE)) + 1){
+                id(led_pos)++;
+              } else {
+                id(forward) = false;
+              }
+
+            } else {
+              if(id(led_pos) < (LAST - id(ANIM_BREITE)) +1){
+                it[id(led_pos)+id(ANIM_BREITE)] = ESPColor(0,0,0);
+                it[pos2-1] = ESPColor(0,0,0);
+              }
+
+              it.range(id(led_pos), id(led_pos) + id(ANIM_BREITE)) = ESPColor(255,0,0);
+              it.range(pos2, pos2 + id(ANIM_BREITE)) = ESPColor(255,0,0);
+
+              if(id(led_pos) > 0){
+                id(led_pos)--;
+              } else {
+                id(forward) = true;
+              }
+            }
+
+            delay(id(DEFAULT_DELAY));
+
+
+
+# Animation: 
+# - LEDs blenden von aussen nach innen vollständig auf rot
+# - LEDs blenden über in grün
+      - addressable_lambda:
+          name: "Tor fertig"
+          update_interval: 16ms
+          lambda: |-
+            static const int16_t LAST = it.size()-1;
+
+            static boolean prepare = true;
+            static boolean blendInRed = true;
+            static int16_t pos2 = 0;
+            static uint8_t r = 255;
+
+            if (initial_run) {
+              r = 255;
+              blendInRed = true;
+              prepare = id(led_pos)>0;
+            }
+
+            pos2 = LAST - id(ANIM_BREITE) - id(led_pos) +1;
+
+            if(prepare){
+              if(id(forward)){
+                if(id(led_pos) > 0){
+                  it[id(led_pos)-1] = ESPColor(0,0,0);
+                  it[pos2+id(ANIM_BREITE)] = ESPColor(0,0,0);
+                }
+  
+                it.range(id(led_pos), id(led_pos) + id(ANIM_BREITE)) = ESPColor(255,0,0);
+                it.range(pos2, pos2 + id(ANIM_BREITE)) = ESPColor(255,0,0);
+  
+                if(id(led_pos) < (LAST - id(ANIM_BREITE)) +1){
+                  id(led_pos)++;
+                } else {
+                  id(forward) = false;
+                }
+  
+              } else {
+                if(id(led_pos) < (LAST - id(ANIM_BREITE)) +1){
+                  it[id(led_pos)+id(ANIM_BREITE)] = ESPColor(0,0,0);
+                  it[pos2-1] = ESPColor(0,0,0);
+                }
+  
+                it.range(id(led_pos), id(led_pos) + id(ANIM_BREITE)) = ESPColor(255,0,0);
+                it.range(pos2, pos2 + id(ANIM_BREITE)) = ESPColor(255,0,0);
+  
+                if(id(led_pos) > 0){
+                  id(led_pos)--;
+                } else {
+                  prepare = false;
+                }
+              }
+
+              delay(id(DEFAULT_DELAY));
+
+            } else {
+              if(blendInRed){
+                it.range(id(led_pos), id(led_pos) + id(ANIM_BREITE)) = ESPColor(r,0,0);
+                it.range(pos2, pos2 + id(ANIM_BREITE)) = ESPColor(r,0,0);
+
+                if(id(led_pos) < (LAST - id(ANIM_BREITE)) +1){
+                  id(led_pos)++;
+                } else {
+                  blendInRed = false;
+                }
+                delay(id(DEFAULT_DELAY));
+
+              } else {
+                it.all() = ESPColor(r, 255-r, 0);
+                if(r>0){
+                  r=r-5;
+                }
+                delay(2);
+
+              }
+            }
+
+# Animation: 
+# - LEDs blenden in 4 Schritten vollständig auf Weißes Licht ein 
+#   (Lauflicht mit abwechselnder Richtung, wobei jeder Durchlauf heller wird)
+# - Überblendung zu Spots durch weiße laufende Spots die die vollständige Beleuchtung "ausradieren"
+      - addressable_lambda:
+          name: "Activate Spots"
+          update_interval: 16ms
+          lambda: |-
+            static const int16_t LAST = it.size()-1;
+
+            static boolean forward = true;
+            static boolean ready = false;
+            static int16_t pos2 = 0;
+            static int16_t colorVal = 0;
+
+            if (initial_run) {
+              ready = false;
+              id(led_pos) = 0;
+              colorVal = 127;
+            }
+
+            pos2 = LAST - id(ANIM_BREITE) - id(led_pos) +1;
+
+            if(!ready){
+              if(forward){
+                it.range(id(led_pos), id(led_pos) + id(ANIM_BREITE)) = ESPColor(colorVal, colorVal, colorVal);
+                it.range(pos2, pos2 + id(ANIM_BREITE)) = ESPColor(colorVal, colorVal, colorVal);
+
+                if(id(led_pos) < (LAST/2) - id(ANIM_BREITE) +1){
+                  id(led_pos)++;
+                } else {
+                  forward = false;
+                  colorVal = colorVal+64;
+                }
+
+              } else {
+                it.range(id(led_pos), id(led_pos) + id(ANIM_BREITE)) = ESPColor(colorVal, colorVal, colorVal);
+                it.range(pos2, pos2 + id(ANIM_BREITE)) = ESPColor(colorVal, colorVal, colorVal);
+
+                if(id(led_pos) > 0){
+                  id(led_pos)--;
+                } else {
+                  forward = true;
+                  colorVal = colorVal+64;
+                  if(colorVal >= 191){
+                    ready = true;
+                  }
+                }
+              }
+            } else {
+              if(forward){
+                it.range(id(led_pos), id(led_pos) + id(ANIM_BREITE)) = ESPColor(255,255,255);
+                it.range(pos2, pos2 + id(ANIM_BREITE)) = ESPColor(255,255,255);
+  
+                if(id(led_pos) < (LAST - id(ANIM_BREITE)*2) + 1){
+                  if(id(led_pos) > 0){
+                    it[id(led_pos)-1] = ESPColor(0,0,0);
+                    it[pos2+id(ANIM_BREITE)] = ESPColor(0,0,0);
+                  }
+                  id(led_pos)++;
+                } else {
+                  if(id(led_pos) < (LAST - id(ANIM_BREITE)) +1){
+                    it[id(led_pos)+id(ANIM_BREITE)] = ESPColor(0,0,0);
+                    it[pos2-1] = ESPColor(0,0,0);
+                  }
+    
+                  it.range(id(led_pos), id(led_pos) + id(ANIM_BREITE)) = ESPColor(255,255,255);
+                  it.range(pos2, pos2 + id(ANIM_BREITE)) = ESPColor(255,255,255);
+    
+                  if(id(led_pos) > id(ANIM_BREITE)+1){
+                    id(led_pos)--;
+                  }
+                }
+              }
+            }
+
+            delay(id(DEFAULT_DELAY));
