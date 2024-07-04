@@ -17,7 +17,8 @@ logger:
 api:
 
 ota:
-  password: "TopSecretSuperPasswort"
+  - platform: esphome
+    password: "TopSecretSuperPasswort"
 
 globals:
 
