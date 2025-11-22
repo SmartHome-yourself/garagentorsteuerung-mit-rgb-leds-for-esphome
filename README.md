@@ -1,5 +1,12 @@
 ![image](https://user-images.githubusercontent.com/705724/179463492-7ad9472f-545a-4229-8fd8-96efb3df8e17.png)
 
+# DEPRECATED !  
+Projekt wird ab sofort in der SHYS-Collection weiter gepflegt:  
+https://www.smarthomeyourself.de/diy-collections/hardware/hardware-garage-door-control-with-rgb-led  
+bzw.  
+https://github.com/SmartHome-yourself/shys-collection/tree/main/templates/hardware/garage-door-control-with-rgb-led  
+
+  
 # garagentor-mit-rgbled-esphome
 Eine Garagentorsteuerung mit RGB-LED Animation beim öffnen/schließen des Tores basierend auf ESPHome
 
